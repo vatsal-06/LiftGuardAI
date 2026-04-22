@@ -47,7 +47,7 @@ API Response
 
 ## 🛠️ Setup
 
-git clone https://github.com/your-username/LiftGuardAI.git\
+git clone https://github.com/your-username/LiftGuardAI.git \
 cd LiftGuardAI\
 npm install\
 node src/server.js
