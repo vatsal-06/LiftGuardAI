@@ -1,3 +1,4 @@
+const axios = require("axios");
 const { getDetections } = require("../services/yoloService");
 const { computeDistance } = require("../services/proximityService");
 const { computeRisk } = require("../services/riskEngine");
@@ -7,16 +8,63 @@ const FRAME_WIDTH = 640;
 const FRAME_HEIGHT = 480;
 
 const normalize = (val, max) => val / max;
+const parseNumber = (value, fallback = 0) => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+};
+const parseBoolean = (value) => {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (["true", "1", "yes", "y"].includes(normalized)) return true;
+    if (["false", "0", "no", "n", ""].includes(normalized)) return false;
+  }
+  return Boolean(value);
+};
 
 exports.analyze = async (req, res) => {
   try {
-    const { image, fall_detected, motion_score } = req.body;
+    const { image } = req.body;
+
+    if (!image) {
+      return res.status(400).json({ error: "image is required" });
+    }
 
     const yoloRes = await getDetections(image);
+    const yoloDetections = yoloRes?.detections || [];
 
-    let detections = cleanDetections(yoloRes.detections || []);
+    console.log("YOLO count:", yoloDetections.length);
 
-    // build people array
+    const detections = cleanDetections(yoloDetections);
+
+    let fall_detected = false;
+    let motion_score = 0;
+
+    if (detections.length > 0) {
+      try {
+        const mpRes = await axios.post(
+          "http://localhost:8001/mediapipe",
+          { image },
+          { timeout: 3000 }
+        );
+
+        console.log("MediaPipe:", mpRes.data);
+
+        fall_detected = parseBoolean(mpRes?.data?.fall_detected);
+        motion_score = parseNumber(mpRes?.data?.motion_score, 0);
+      } catch (mpErr) {
+        console.log("MediaPipe:", {
+          fall_detected: false,
+          motion_score: 0,
+          error: mpErr.message,
+        });
+        fall_detected = false;
+        motion_score = 0;
+      }
+    } else {
+      console.log("MediaPipe:", { fall_detected: false, motion_score: 0, skipped: true });
+    }
+
     const people = detections.map((d, idx) => {
       const cx = d.x + d.w / 2;
       const cy = d.y + d.h / 2;
