@@ -1,0 +1,13 @@
+import cv2
+import mediapipe as mp
+
+mp_pose = mp.solutions.pose
+pose = mp_pose.Pose()
+
+def get_pose_landmarks(frame):
+    rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    result = pose.process(rgb)
+
+    if result.pose_landmarks:
+        return result.pose_landmarks.landmark
+    return None
