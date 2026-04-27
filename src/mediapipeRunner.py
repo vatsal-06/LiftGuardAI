@@ -6,7 +6,9 @@ import cv2
 import numpy as np
 import uvicorn
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+import os
 
 from src.mp_module.fallDetection import detect_fall
 from src.mp_module.motionAnalysis import compute_motion
@@ -14,6 +16,20 @@ from src.mp_module.poseService import get_pose_landmarks
 
 
 app = FastAPI()
+
+allowed_origins = [
+    origin.strip()
+    for origin in os.getenv("CORS_ORIGIN", "*").split(",")
+    if origin.strip()
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"] if "*" in allowed_origins else allowed_origins,
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 FRAME_COUNT = 10
 VERTICAL_DROP_THRESHOLD = 0.12

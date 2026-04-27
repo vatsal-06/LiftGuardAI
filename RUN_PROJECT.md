@@ -184,3 +184,74 @@ pip install fastapi uvicorn ultralytics opencv-python numpy "mediapipe==0.10.14"
 ```bash
 pip install mediapipe-silicon
 ```
+
+## 11. Deploy on Render (Production)
+
+This repo is now ready for a 2-service Render setup:
+
+- `liftguard-python` (Docker Web Service)
+  - Runs both endpoints from one app:
+    - `/detect` (YOLO)
+    - `/mediapipe` (MediaPipe)
+- `liftguard-node` (Node Web Service)
+  - Exposes `/api/analyze`
+
+### A) Deploy Python service (`liftguard-python`)
+
+1. In Render: New + → Web Service
+2. Connect this GitHub repo
+3. Select `Docker` environment
+4. Render auto-detects `Dockerfile`
+5. Set environment variables:
+
+```env
+CORS_ORIGIN=*
+```
+
+6. Deploy
+7. After deploy, copy service URL, e.g.:
+
+`https://liftguard-python.onrender.com`
+
+### B) Deploy Node service (`liftguard-node`)
+
+1. In Render: New + → Web Service
+2. Connect same repo
+3. Select `Node` environment
+4. Build command:
+
+```bash
+npm install
+```
+
+5. Start command:
+
+```bash
+npm start
+```
+
+6. Set environment variables:
+
+```env
+CORS_ORIGIN=*
+YOLO_SERVICE_URL=https://liftguard-python.onrender.com/detect
+MEDIAPIPE_SERVICE_URL=https://liftguard-python.onrender.com/mediapipe
+```
+
+7. Deploy
+
+### C) Verify in production
+
+Call Node analyze endpoint with base64 image:
+
+```bash
+curl -X POST https://<your-node-service>.onrender.com/api/analyze \
+  -H "Content-Type: application/json" \
+  -d '{"image":"<BASE64_IMAGE>"}'
+```
+
+### D) Notes
+
+- Node now uses `PORT` from Render automatically.
+- Node now uses `YOLO_SERVICE_URL` and `MEDIAPIPE_SERVICE_URL` (no localhost dependency).
+- Python Docker image serves both YOLO + MediaPipe from one endpoint base URL.

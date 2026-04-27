@@ -1,0 +1,15 @@
+.git
+.gitignore
+.vscode
+venv
+node_modules
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+*.ipynb
+test
+test_videos
+liftimagedata.txt
+README.md
+RUN_PROJECT.md

@@ -1,11 +1,34 @@
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from ultralytics import YOLO
 import cv2
 import base64
 import numpy as np
+import os
+
+from src.mp_module.fallDetection import detect_fall
+from src.mp_module.motionAnalysis import compute_motion
+from src.mp_module.poseService import get_pose_landmarks
 
 app = FastAPI()
 model = YOLO("yolov8n.pt")
+
+FRAME_COUNT = 10
+VERTICAL_DROP_THRESHOLD = 0.12
+
+allowed_origins = [
+    origin.strip()
+    for origin in os.getenv("CORS_ORIGIN", "*").split(",")
+    if origin.strip()
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"] if "*" in allowed_origins else allowed_origins,
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 def parse_bool(value):
@@ -39,6 +62,93 @@ def decode_image(base64_str):
 def encode_image(img):
     _, buffer = cv2.imencode(".jpg", img)
     return base64.b64encode(buffer).decode()
+
+
+def get_pose(frame):
+    return get_pose_landmarks(frame)
+
+
+def posture_horizontal(pose):
+    if pose is None or len(pose) <= 24:
+        return False
+
+    left_shoulder = pose[11]
+    right_shoulder = pose[12]
+    left_hip = pose[23]
+    right_hip = pose[24]
+
+    shoulder_width = abs(left_shoulder.x - right_shoulder.x)
+    torso_height = abs(
+        ((left_shoulder.y + right_shoulder.y) / 2)
+        - ((left_hip.y + right_hip.y) / 2)
+    )
+    return shoulder_width > (torso_height * 1.2)
+
+
+def hip_center_y(pose):
+    if pose is None or len(pose) <= 24:
+        return None
+    left_hip = pose[23]
+    right_hip = pose[24]
+    return (left_hip.y + right_hip.y) / 2
+
+
+def run_mediapipe_pipeline(frames):
+    if not frames:
+        return {"fall_detected": False, "motion_score": 0.0}
+
+    prev_pose = None
+    motions = []
+    valid_poses = []
+
+    for i, frame in enumerate(frames):
+        resized = cv2.resize(frame, (640, 480))
+        pose = get_pose(resized)
+        motion = compute_motion(prev_pose, pose)
+
+        print("Frame:", i)
+        print("Pose detected:", pose is not None)
+        print("Motion:", motion)
+
+        motions.append(float(motion))
+        if pose is not None:
+            valid_poses.append(pose)
+            prev_pose = pose
+
+    if len(valid_poses) <= (len(frames) // 2):
+        motion_score = 0.2
+    else:
+        motion_score = max(motions) if motions else 0.0
+
+    if motion_score < 0.1:
+        motion_score = 0.2
+
+    print("Motion values:", motions)
+    print("Final motion_score:", motion_score)
+
+    motion_score = max(0.0, min(1.0, motion_score))
+
+    vertical_drop = 0.0
+    if len(valid_poses) >= 2:
+        start_y = hip_center_y(valid_poses[0])
+        end_y = hip_center_y(valid_poses[-1])
+        if start_y is not None and end_y is not None:
+            vertical_drop = end_y - start_y
+
+    horizontal_posture = posture_horizontal(valid_poses[-1]) if valid_poses else False
+    fall_detected = detect_fall(motion_score) or (
+        vertical_drop > VERTICAL_DROP_THRESHOLD and horizontal_posture
+    )
+
+    return {
+        "fall_detected": bool(fall_detected),
+        "motion_score": round(float(motion_score), 4),
+    }
+
+
+@app.get("/healthz")
+async def healthz():
+    return {"ok": True}
 
 
 @app.post("/detect")
@@ -104,3 +214,17 @@ async def detect(data: dict):
         "motion_score": motion_score,
         "image": annotated_base64,
     }
+
+
+@app.post("/mediapipe")
+async def mediapipe(data: dict):
+    image_data = data.get("image")
+    if not image_data:
+        return {"fall_detected": False, "motion_score": 0.0}
+
+    frame = decode_image(image_data)
+    if frame is None:
+        return {"fall_detected": False, "motion_score": 0.0}
+
+    frames = [frame.copy() for _ in range(FRAME_COUNT)]
+    return run_mediapipe_pipeline(frames)

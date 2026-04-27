@@ -6,6 +6,8 @@ const { cleanDetections } = require("../services/detectionService");
 
 const FRAME_WIDTH = 640;
 const FRAME_HEIGHT = 480;
+const MEDIAPIPE_SERVICE_URL =
+  process.env.MEDIAPIPE_SERVICE_URL || "http://localhost:8001/mediapipe";
 
 const normalize = (val, max) => val / max;
 const parseNumber = (value, fallback = 0) => {
@@ -43,9 +45,9 @@ exports.analyze = async (req, res) => {
     if (detections.length > 0) {
       try {
         const mpRes = await axios.post(
-          "http://localhost:8001/mediapipe",
+          MEDIAPIPE_SERVICE_URL,
           { image },
-          { timeout: 3000 }
+          { timeout: 5000 }
         );
 
         console.log("MediaPipe:", mpRes.data);

@@ -1,8 +1,11 @@
 const axios = require("axios");
 
+const YOLO_SERVICE_URL =
+  process.env.YOLO_SERVICE_URL || "http://localhost:8000/detect";
+
 exports.getDetections = async (base64Image, fallDetected, motionScore) => {
   const res = await axios.post(
-    "http://localhost:8000/detect",
+    YOLO_SERVICE_URL,
     {
       image: base64Image,
       fall_detected: Boolean(fallDetected),
