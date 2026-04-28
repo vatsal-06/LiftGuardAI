@@ -1,4 +1,4 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from ultralytics import YOLO
@@ -65,11 +65,14 @@ def parse_float(value, fallback=0.0):
 
 
 def decode_image(base64_str):
+    if not isinstance(base64_str, str) or not base64_str.strip():
+        return None
+
     if "," in base64_str:
         base64_str = base64_str.split(",")[1]
 
     try:
-        img_bytes = base64.b64decode(base64_str)
+        img_bytes = base64.b64decode(base64_str, validate=True)
     except Exception:
         return None
 
@@ -81,10 +84,18 @@ def decode_image(base64_str):
     return img
 
 
+def is_valid_image(img) -> bool:
+    return (
+        isinstance(img, np.ndarray)
+        and img.size > 0
+        and img.ndim in (2, 3)
+        and img.shape[0] > 0
+        and img.shape[1] > 0
+    )
+
+
 def encode_image(img):
-    if img is None:
-        raise ValueError("empty image")
-    if getattr(img, "size", None) == 0:
+    if not is_valid_image(img):
         raise ValueError("empty image")
 
     ok, buffer = cv2.imencode(".jpg", img)
@@ -180,9 +191,21 @@ async def healthz():
 
 
 @app.post("/detect")
-async def detect(data: dict):
-    image = decode_image(data.get("image", ""))
-    if image is None:
+async def detect(request: Request):
+    try:
+        data = await request.json()
+    except Exception:
+        return JSONResponse(status_code=400, content={"error": "invalid JSON body"})
+
+    if not isinstance(data, dict):
+        return JSONResponse(status_code=400, content={"error": "invalid JSON body"})
+
+    raw_image = data.get("image")
+    if raw_image is None or (isinstance(raw_image, str) and not raw_image.strip()):
+        return JSONResponse(status_code=400, content={"error": "missing image"})
+
+    image = decode_image(raw_image)
+    if not is_valid_image(image):
         return JSONResponse(
             status_code=400, content={"error": "invalid or empty image"}
         )
@@ -196,7 +219,11 @@ async def detect(data: dict):
     except Exception:
         model_input = image
 
-    results = model(model_input)[0]
+    try:
+        results = model(model_input)[0]
+    except Exception as e:
+        print(f"YOLO inference failed: {e}")
+        return JSONResponse(status_code=500, content={"error": "inference failed"})
 
     detections = []
 

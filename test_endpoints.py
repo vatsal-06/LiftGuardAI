@@ -115,6 +115,44 @@ def test_node_analyze():
         return False
 
 
+def test_python_process_video():
+    """Test POST /process-video with a sample file from test_videos"""
+    print("\n🔍 Testing Python Process Video: POST /process-video")
+    try:
+        sample_dir = Path(__file__).parent / "test_videos"
+        video_file = sample_dir / "fall.mp4"
+        if not video_file.exists():
+            print(f"   ❌ Sample video not found: {video_file}")
+            return False
+
+        with open(video_file, "rb") as f:
+            video_b64 = base64.b64encode(f.read()).decode("utf-8")
+
+        payload = {"video": video_b64, "filename": video_file.name}
+        response = requests.post(
+            f"{PYTHON_BASE_URL}/process-video", json=payload, timeout=120
+        )
+        print(f"   Status: {response.status_code}")
+        result = response.json()
+        if response.status_code != 200:
+            print(f"   Error response: {result}")
+            return False
+
+        if "video" in result:
+            out_b64 = result["video"]
+            out_path = Path("./annotated_video_result.mp4")
+            with open(out_path, "wb") as out:
+                out.write(base64.b64decode(out_b64))
+            print(f"   Saved annotated video to: {out_path}")
+        else:
+            print("   No video returned in response")
+
+        return True
+    except Exception as e:
+        print(f"   ❌ Error: {e}")
+        return False
+
+
 def main():
     print("=" * 60)
     print("LiftGuardAI Endpoint Test Suite")
@@ -129,6 +167,7 @@ def main():
     results["python_health"] = test_python_health()
     results["python_detect"] = test_python_detect()
     results["python_mediapipe"] = test_python_mediapipe()
+    results["python_process_video"] = test_python_process_video()
 
     # Test Node.js
     print("\n" + "=" * 60)
