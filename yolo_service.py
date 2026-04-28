@@ -1,10 +1,15 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from ultralytics import YOLO
 import cv2
 import base64
 import numpy as np
 import os
+import tempfile
+import shutil
+from pathlib import Path
+from typing import List, Dict
 
 from src.mp_module.fallDetection import detect_fall
 from src.mp_module.motionAnalysis import compute_motion
@@ -227,3 +232,222 @@ async def mediapipe(data: dict):
 
     frames = [frame.copy() for _ in range(FRAME_COUNT)]
     return run_mediapipe_pipeline(frames)
+
+
+@app.post("/process-video")
+async def process_video(file: UploadFile = File(...)):
+    """
+    Process video file and return annotated video with real-time metrics.
+
+    Returns:
+    - annotated_video: Base64 encoded MP4 video with bounding boxes and metrics
+    - metrics: Frame-by-frame detection data
+    - summary: Overall video statistics
+    """
+
+    if not file.filename.endswith((".mp4", ".avi", ".mov", ".mkv", ".webm")):
+        return {"error": "Invalid video format. Supported: MP4, AVI, MOV, MKV, WebM"}
+
+    temp_dir = tempfile.mkdtemp()
+
+    try:
+        # Save uploaded file
+        video_path = os.path.join(temp_dir, file.filename)
+        with open(video_path, "wb") as buffer:
+            buffer.write(await file.read())
+
+        # Open video
+        cap = cv2.VideoCapture(video_path)
+        if not cap.isOpened():
+            return {"error": "Failed to open video file"}
+
+        # Get video properties
+        fps = cap.get(cv2.CAP_PROP_FPS)
+        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+
+        if fps == 0 or width == 0 or height == 0:
+            return {"error": "Invalid video properties"}
+
+        # Output video path
+        output_path = os.path.join(temp_dir, "annotated_output.mp4")
+        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+        out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
+
+        # Process frames
+        metrics = []
+        frame_count = 0
+        fall_count = 0
+        prev_pose = None
+        motion_buffer = []  # Track last 10 frames for motion
+
+        print(f"Processing video: {total_frames} frames @ {fps} FPS")
+
+        while cap.isOpened():
+            ret, frame = cap.read()
+            if not ret:
+                break
+
+            frame_num = frame_count
+
+            # YOLO Detection
+            results = model(frame)[0]
+            num_people = 0
+            detections = []
+
+            for box in results.boxes:
+                cls = int(box.cls[0])
+                if cls == 0:  # person
+                    num_people += 1
+                    x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
+                    detections.append({"x": x1, "y": y1, "w": x2 - x1, "h": y2 - y1})
+
+                    # Draw bounding box
+                    cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                    cv2.putText(
+                        frame,
+                        "Person",
+                        (x1, y1 - 10),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.6,
+                        (0, 255, 0),
+                        2,
+                    )
+
+            # MediaPipe Analysis
+            resized = cv2.resize(frame, (640, 480))
+            pose = get_pose(resized)
+            motion = compute_motion(prev_pose, pose)
+            motion_buffer.append(float(motion))
+
+            # Keep last 10 frames for aggregation
+            if len(motion_buffer) > FRAME_COUNT:
+                motion_buffer.pop(0)
+
+            motion_score = max(motion_buffer) if motion_buffer else 0.0
+            if motion_score < 0.1:
+                motion_score = 0.2
+            motion_score = max(0.0, min(1.0, motion_score))
+
+            # Fall detection
+            fall_detected = detect_fall(motion_score)
+            if fall_detected:
+                fall_count += 1
+
+            prev_pose = pose
+
+            # Draw metrics on frame
+            fall_color = (0, 0, 255) if fall_detected else (0, 255, 0)
+            cv2.putText(
+                frame,
+                f"Frame: {frame_num}/{total_frames}",
+                (10, 30),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.7,
+                (255, 255, 255),
+                2,
+            )
+            cv2.putText(
+                frame,
+                f"People: {num_people}",
+                (10, 70),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.7,
+                (0, 255, 255),
+                2,
+            )
+            cv2.putText(
+                frame,
+                f"Motion: {motion_score:.3f}",
+                (10, 110),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.7,
+                (255, 200, 0),
+                2,
+            )
+            cv2.putText(
+                frame,
+                f"Fall: {'YES' if fall_detected else 'NO'}",
+                (10, 150),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.7,
+                fall_color,
+                2,
+            )
+
+            # Store frame metrics
+            metrics.append(
+                {
+                    "frame": frame_num,
+                    "timestamp_sec": frame_num / fps,
+                    "num_people": num_people,
+                    "motion_score": round(float(motion_score), 4),
+                    "fall_detected": bool(fall_detected),
+                    "detections": detections,
+                }
+            )
+
+            # Write annotated frame to output video
+            out.write(frame)
+
+            frame_count += 1
+
+            # Progress indicator
+            if frame_count % 30 == 0:
+                print(f"  Processed {frame_count}/{total_frames} frames...")
+
+        cap.release()
+        out.release()
+
+        # Encode output video to base64
+        with open(output_path, "rb") as video_file:
+            video_base64 = base64.b64encode(video_file.read()).decode()
+
+        # Calculate summary statistics
+        summary = {
+            "total_frames": total_frames,
+            "duration_sec": total_frames / fps,
+            "fps": fps,
+            "video_resolution": {"width": width, "height": height},
+            "total_falls_detected": fall_count,
+            "avg_motion_score": (
+                round(sum(m["motion_score"] for m in metrics) / len(metrics), 4)
+                if metrics
+                else 0.0
+            ),
+            "max_motion_score": (
+                round(max(m["motion_score"] for m in metrics), 4) if metrics else 0.0
+            ),
+            "frames_with_people": len([m for m in metrics if m["num_people"] > 0]),
+            "fall_frames": len([m for m in metrics if m["fall_detected"]]),
+            "people_in_video": len(set(p for m in metrics for p in [m["num_people"]])),
+        }
+
+        print(f"Video processing complete!")
+        print(f"  Falls detected: {fall_count}")
+        print(f"  Average motion: {summary['avg_motion_score']}")
+
+        return {
+            "status": "success",
+            "video": video_base64,
+            "metrics": metrics,
+            "summary": summary,
+        }
+
+    except Exception as e:
+        print(f"Error processing video: {e}")
+        return {"error": f"Video processing failed: {str(e)}"}
+
+    finally:
+        # Cleanup temp files
+        if os.path.exists(temp_dir):
+            shutil.rmtree(temp_dir)
+
+
+if __name__ == "__main__":
+    import uvicorn
+
+    port = int(os.getenv("PORT", 8000))
+    host = os.getenv("HOST", "0.0.0.0")
+    uvicorn.run(app, host=host, port=port)
