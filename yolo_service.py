@@ -79,8 +79,7 @@ def posture_horizontal(pose):
 
     shoulder_width = abs(left_shoulder.x - right_shoulder.x)
     torso_height = abs(
-        ((left_shoulder.y + right_shoulder.y) / 2)
-        - ((left_hip.y + right_hip.y) / 2)
+        ((left_shoulder.y + right_shoulder.y) / 2) - ((left_hip.y + right_hip.y) / 2)
     )
     return shoulder_width > (torso_height * 1.2)
 
