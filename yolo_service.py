@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from ultralytics import YOLO
 import cv2
 import base64
@@ -16,6 +17,15 @@ from src.mp_module.poseService import get_pose_landmarks
 
 app = FastAPI()
 model = YOLO("yolov8n.pt")
+
+# Warm up the model once at startup with a small zero image to reduce
+# first-request latency and ensure device initialization.
+try:
+    _warmup_img = np.zeros((640, 640, 3), dtype=np.uint8)
+    _ = model(_warmup_img)
+    print("YOLO model warmup completed")
+except Exception as e:
+    print(f"YOLO warmup failed: {e}")
 
 FRAME_COUNT = 10
 VERTICAL_DROP_THRESHOLD = 0.12
@@ -58,13 +68,28 @@ def decode_image(base64_str):
     if "," in base64_str:
         base64_str = base64_str.split(",")[1]
 
-    img_bytes = base64.b64decode(base64_str)
+    try:
+        img_bytes = base64.b64decode(base64_str)
+    except Exception:
+        return None
+
+    if not img_bytes:
+        return None
+
     np_arr = np.frombuffer(img_bytes, np.uint8)
-    return cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+    img = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+    return img
 
 
 def encode_image(img):
-    _, buffer = cv2.imencode(".jpg", img)
+    if img is None:
+        raise ValueError("empty image")
+    if getattr(img, "size", None) == 0:
+        raise ValueError("empty image")
+
+    ok, buffer = cv2.imencode(".jpg", img)
+    if not ok or buffer is None:
+        raise ValueError("failed to encode image")
     return base64.b64encode(buffer).decode()
 
 
@@ -156,13 +181,27 @@ async def healthz():
 
 @app.post("/detect")
 async def detect(data: dict):
-    image = decode_image(data["image"])
+    image = decode_image(data.get("image", ""))
+    if image is None:
+        return JSONResponse(
+            status_code=400, content={"error": "invalid or empty image"}
+        )
+
     fall_detected = parse_bool(data.get("fall_detected", False))
     motion_score = parse_float(data.get("motion_score", 0.0))
 
-    results = model(image)[0]
+    # Resize image to the model's expected input for more consistent performance
+    try:
+        model_input = cv2.resize(image, (640, 640))
+    except Exception:
+        model_input = image
+
+    results = model(model_input)[0]
 
     detections = []
+
+    # Draw on a copy of the model_input so encoding and annotations are consistent
+    annotated = model_input.copy()
 
     for box in results.boxes:
         cls = int(box.cls[0])
@@ -172,11 +211,11 @@ async def detect(data: dict):
             detections.append({"x": x1, "y": y1, "w": x2 - x1, "h": y2 - y1})
 
             # 🎯 DRAW BOX
-            cv2.rectangle(image, (x1, y1), (x2, y2), (0, 255, 0), 2)
+            cv2.rectangle(annotated, (x1, y1), (x2, y2), (0, 255, 0), 2)
 
             # label
             cv2.putText(
-                image,
+                annotated,
                 "Person",
                 (x1, y1 - 10),
                 cv2.FONT_HERSHEY_SIMPLEX,
@@ -197,7 +236,7 @@ async def detect(data: dict):
     )
 
     cv2.putText(
-        image,
+        annotated,
         f"YOLO Motion: {motion_score:.5f}",
         (10, 60),
         cv2.FONT_HERSHEY_SIMPLEX,
@@ -207,7 +246,13 @@ async def detect(data: dict):
     )
 
     # 🔁 Convert annotated image back to base64
-    annotated_base64 = encode_image(image)
+    try:
+        annotated_base64 = encode_image(annotated)
+    except Exception as e:
+        print(f"Failed to encode annotated image: {e}")
+        return JSONResponse(
+            status_code=500, content={"error": "failed to encode annotated image"}
+        )
 
     print("len(annotated_base64):", len(annotated_base64))
 

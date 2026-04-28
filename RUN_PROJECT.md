@@ -235,13 +235,16 @@ npm start
 
 ```env
 CORS_ORIGIN=*
-YOLO_SERVICE_URL=https://liftguard-python.onrender.com/detect
-MEDIAPIPE_SERVICE_URL=https://liftguard-python.onrender.com/mediapipe
+# Point both upstream URLs to the Python service, not the Node service.
+YOLO_SERVICE_URL=https://<your-python-service>.onrender.com/detect
+MEDIAPIPE_SERVICE_URL=https://<your-python-service>.onrender.com/mediapipe
 YOLO_SERVICE_TIMEOUT_MS=60000
 YOLO_SERVICE_RETRIES=2
 MEDIAPIPE_SERVICE_TIMEOUT_MS=60000
 MEDIAPIPE_SERVICE_RETRIES=2
 ```
+
+Replace `<your-python-service>` with the actual Render service name for the Docker/FastAPI app, for example `liftguard-python`.
 
 7. Deploy
 
