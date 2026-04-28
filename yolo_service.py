@@ -247,14 +247,14 @@ async def process_video(data: dict):
 
     video_base64 = data.get("video")
     filename = data.get("filename", "video.mp4")
-    
+
     if not video_base64:
-        return {"error": "No video data provided. Use 'video' key with base64-encoded data"}
+        return {
+            "error": "No video data provided. Use 'video' key with base64-encoded data"
+        }
 
     if not filename.endswith((".mp4", ".avi", ".mov", ".mkv", ".webm")):
-        return {
-            "error": "Invalid video format. Supported: MP4, AVI, MOV, MKV, WebM"
-        }
+        return {"error": "Invalid video format. Supported: MP4, AVI, MOV, MKV, WebM"}
 
     temp_dir = tempfile.mkdtemp()
 
