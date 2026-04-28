@@ -4,9 +4,8 @@ const cors = require("cors");
 const analyzeRoute = require("./routes/analyze");
 
 const app = express();
-const YOLO_SERVICE_URL = process.env.YOLO_SERVICE_URL || "http://localhost:8000/detect";
-const MEDIAPIPE_SERVICE_URL =
-  process.env.MEDIAPIPE_SERVICE_URL || "http://localhost:8001/mediapipe";
+const YOLO_SERVICE_URL = process.env.YOLO_SERVICE_URL;
+const MEDIAPIPE_SERVICE_URL = process.env.MEDIAPIPE_SERVICE_URL;
 const YOLO_SERVICE_TIMEOUT_MS = Number(process.env.YOLO_SERVICE_TIMEOUT_MS || 60000);
 const YOLO_SERVICE_RETRIES = Number(process.env.YOLO_SERVICE_RETRIES || 2);
 const MEDIAPIPE_SERVICE_TIMEOUT_MS = Number(

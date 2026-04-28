@@ -1594,6 +1594,332 @@ ResolutionPreset.low  // Instead of ResolutionPreset.medium
 
 ---
 
+## Video Detection Testing
+
+### Testing the `/process-video` Endpoint
+
+Before deploying video processing in your Flutter app, validate the endpoint with test videos.
+
+#### Prerequisites
+
+- Python FastAPI running on port 8000
+- Sample test videos (MP4, AVI, MOV, MKV, or WebM)
+- `curl` or a Python test script
+
+#### Quick Test (curl)
+
+```bash
+# 1. Encode video to base64
+VIDEO_BASE64=$(base64 -i test_videos/fall.mp4 | tr -d '\n')
+
+# 2. Send to /process-video
+curl -X POST http://localhost:8000/process-video \
+  -H "Content-Type: application/json" \
+  -d "{
+    \"video\": \"$VIDEO_BASE64\",
+    \"filename\": \"fall.mp4\"
+  }" \
+  -o response.json
+
+# 3. Check response
+jq '.summary' response.json
+```
+
+#### Full Python Test
+
+```python
+import requests
+import base64
+import json
+from pathlib import Path
+
+def test_video_processing():
+    # Configuration
+    API_URL = "http://localhost:8000/process-video"
+    VIDEO_FILE = Path("test_videos/fall.mp4")
+
+    if not VIDEO_FILE.exists():
+        print(f"❌ Video file not found: {VIDEO_FILE}")
+        return False
+
+    try:
+        print(f"📹 Loading video: {VIDEO_FILE.name}")
+        with open(VIDEO_FILE, 'rb') as f:
+            video_bytes = f.read()
+
+        video_base64 = base64.b64encode(video_bytes).decode('utf-8')
+        print(f"   Size: {len(video_base64) / 1024 / 1024:.2f} MB (encoded)")
+
+        payload = {
+            "video": video_base64,
+            "filename": VIDEO_FILE.name
+        }
+
+        print("⏳ Processing video (this may take a minute)...")
+        response = requests.post(API_URL, json=payload, timeout=300)
+
+        print(f"\n📊 Response Status: {response.status_code}")
+
+        if response.status_code != 200:
+            print(f"❌ Error: {response.json()}")
+            return False
+
+        result = response.json()
+
+        # Print summary
+        summary = result.get('summary', {})
+        print(f"\n✅ Video Processing Complete:")
+        print(f"   Total Frames: {summary.get('total_frames', 0)}")
+        print(f"   Duration: {summary.get('duration_sec', 0):.2f}s")
+        print(f"   FPS: {summary.get('fps', 0):.1f}")
+        print(f"   Resolution: {summary.get('video_resolution', {})}")
+        print(f"   Falls Detected: {summary.get('total_falls_detected', 0)}")
+        print(f"   Avg Motion: {summary.get('avg_motion_score', 0):.4f}")
+        print(f"   Max Motion: {summary.get('max_motion_score', 0):.4f}")
+        print(f"   People in Video: {summary.get('people_in_video', 0)}")
+
+        # Save annotated video
+        if 'video' in result:
+            video_out = result['video']
+            annotated_path = Path("annotated_video.mp4")
+            with open(annotated_path, 'wb') as out:
+                out.write(base64.b64decode(video_out))
+            print(f"\n💾 Annotated video saved: {annotated_path}")
+
+        return True
+
+    except requests.exceptions.Timeout:
+        print("❌ Request timeout. Video may be too large or server is slow.")
+        return False
+    except Exception as e:
+        print(f"❌ Error: {e}")
+        return False
+
+if __name__ == "__main__":
+    success = test_video_processing()
+    exit(0 if success else 1)
+```
+
+#### Expected Behavior
+
+**Success Response (200 OK):**
+
+- `status`: "success"
+- `video`: Base64-encoded annotated MP4
+- `metrics`: Array of frame-level detections
+- `summary`: Video statistics
+
+**Input Validation Errors (400):**
+
+- Missing `video` field → `{"error": "No video data provided"}`
+- Invalid filename extension → `{"error": "Invalid video format..."}`
+- Corrupted video file → `{"error": "Failed to open video file"}`
+
+**Processing Errors (500):**
+
+- YOLO inference failure → `{"error": "Failed to process frame X"}`
+- Output encoding failure → `{"error": "Failed to encode output video"}`
+
+#### Performance Guidelines
+
+| Video Duration | Resolution | Est. Time | Memory |
+| -------------- | ---------- | --------- | ------ |
+| 5s @ 30fps     | 1280x720   | 30-60s    | 500MB  |
+| 10s @ 30fps    | 1920x1080  | 90-120s   | 1GB    |
+| 30s @ 30fps    | 1920x1080  | 5-10min   | 2GB    |
+
+**Optimization Tips:**
+
+- Use MP4 format (best codec support)
+- Keep videos under 30 seconds for mobile
+- Resize to 720p for faster processing
+- Use lower FPS if available (15 fps is sufficient for fall detection)
+
+### Integration in Flutter
+
+#### Video Processing with Progress Tracking
+
+```dart
+Future<void> _processVideoWithProgress() async {
+  final video = await _picker.pickVideo(source: ImageSource.gallery);
+  if (video == null) return;
+
+  setState(() {
+    _isProcessing = true;
+    _statusMessage = 'Reading video file...';
+  });
+
+  try {
+    final bytes = await video.readAsBytes();
+    final sizeMB = bytes.length / (1024 * 1024);
+
+    if (sizeMB > 100) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Video too large (${sizeMB.toStringAsFixed(1)}MB). Max 100MB.'))
+      );
+      return;
+    }
+
+    setState(() => _statusMessage = 'Encoding video...');
+
+    final result = await _apiService.processVideoFile(bytes, video.name);
+
+    setState(() {
+      _result = result;
+      _statusMessage = 'Processing complete!';
+    });
+  } catch (e) {
+    setState(() => _statusMessage = 'Error: $e');
+  } finally {
+    setState(() => _isProcessing = false);
+  }
+}
+```
+
+#### Handling Large Videos
+
+```dart
+// For videos >50MB, show size warning
+if (bytes.length > 50 * 1024 * 1024) {
+  final confirm = await showDialog<bool>(
+    context: context,
+    builder: (context) => AlertDialog(
+      title: Text('Large Video'),
+      content: Text(
+        'This video is large and may take several minutes to process. Continue?'
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context, false),
+          child: Text('Cancel'),
+        ),
+        TextButton(
+          onPressed: () => Navigator.pop(context, true),
+          child: Text('Process'),
+        ),
+      ],
+    ),
+  );
+
+  if (confirm != true) return;
+}
+```
+
+#### Extracting Frame-Level Fall Detection
+
+```dart
+// Get frames with falls
+List<FrameMetrics> getFallFrames() {
+  return _result!.metrics
+      .where((m) => m.fallDetected)
+      .toList();
+}
+
+// Get peak motion frames
+List<FrameMetrics> getPeakMotionFrames({threshold = 0.7}) {
+  return _result!.metrics
+      .where((m) => m.motionScore > threshold)
+      .toList();
+}
+
+// Timeline visualization example
+ListView.builder(
+  itemCount: _result!.metrics.length,
+  itemBuilder: (context, index) {
+    final metric = _result!.metrics[index];
+    final isFall = metric.fallDetected;
+    final isHighMotion = metric.motionScore > 0.5;
+
+    return Container(
+      color: isFall ? Colors.red[100] : isHighMotion ? Colors.yellow[100] : null,
+      child: ListTile(
+        title: Text('${metric.timeString}'),
+        subtitle: Text(
+          'People: ${metric.numPeople} | Motion: ${(metric.motionScore * 100).toStringAsFixed(0)}%'
+        ),
+        trailing: isFall ? Icon(Icons.warning, color: Colors.red) : null,
+      ),
+    );
+  },
+)
+```
+
+### Common Issues & Solutions
+
+#### Issue: "Failed to open video file"
+
+**Causes:**
+
+- Corrupted video file
+- Unsupported codec
+- Missing audio stream (rare)
+
+**Solutions:**
+
+```bash
+# Verify video integrity
+ffprobe test_videos/fall.mp4
+
+# Re-encode to standard MP4
+ffmpeg -i input.mov -c:v libx264 -preset fast -c:a aac output.mp4
+```
+
+#### Issue: Processing timeout (>5 min)
+
+**Causes:**
+
+- Video too large
+- Server CPU throttled
+- Network instability
+
+**Solutions:**
+
+- Reduce video length (< 30 seconds)
+- Lower resolution (720p)
+- Increase Flutter timeout to 600 seconds
+
+```dart
+final apiService = LiftGuardApiService(
+  timeout: Duration(seconds: 600),  // 10 minutes
+);
+```
+
+#### Issue: Memory error during encoding
+
+**Causes:**
+
+- Video resolution too high
+- Server RAM exhausted
+- Multiple concurrent requests
+
+**Solutions:**
+
+- Process one video at a time
+- Reduce resolution on server:
+
+```python
+# In yolo_service.py process_video endpoint
+scale_factor = 0.5  # 50% resolution
+frame_resized = cv2.resize(frame, None, fx=scale_factor, fy=scale_factor)
+```
+
+#### Issue: No falls detected in known fall video
+
+**Causes:**
+
+- Fall too fast (motion blur)
+- Poor lighting
+- Person partially out of frame
+- Model sensitivity too high
+
+**Solutions:**
+
+- Check motion scores (should be > 0.3 during fall)
+- Verify person detected in frames
+- Lower motion threshold in config
+
+---
+
 ## Monitoring & Logging
 
 ### Add Logging Service

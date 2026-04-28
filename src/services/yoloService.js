@@ -1,7 +1,6 @@
 const axios = require("axios");
 
-const YOLO_SERVICE_URL =
-  process.env.YOLO_SERVICE_URL || "http://localhost:8000/detect";
+const YOLO_SERVICE_URL = process.env.YOLO_SERVICE_URL;
 const YOLO_SERVICE_TIMEOUT_MS = Number(process.env.YOLO_SERVICE_TIMEOUT_MS || 60000);
 const YOLO_SERVICE_RETRIES = Number(process.env.YOLO_SERVICE_RETRIES || 2);
 
