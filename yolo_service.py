@@ -1,6 +1,5 @@
-from fastapi import FastAPI, UploadFile, File
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
 from ultralytics import YOLO
 import cv2
 import base64
@@ -235,26 +234,40 @@ async def mediapipe(data: dict):
 
 
 @app.post("/process-video")
-async def process_video(file: UploadFile = File(...)):
+async def process_video(data: dict):
     """
-    Process video file and return annotated video with real-time metrics.
+    Process video data (base64-encoded in JSON) and return annotated video with real-time metrics.
 
     Returns:
-    - annotated_video: Base64 encoded MP4 video with bounding boxes and metrics
+    - status: "success" if processing completed
+    - video: Base64 encoded annotated MP4 video with overlaid metrics
     - metrics: Frame-by-frame detection data
     - summary: Overall video statistics
     """
 
-    if not file.filename.endswith((".mp4", ".avi", ".mov", ".mkv", ".webm")):
-        return {"error": "Invalid video format. Supported: MP4, AVI, MOV, MKV, WebM"}
+    video_base64 = data.get("video")
+    filename = data.get("filename", "video.mp4")
+    
+    if not video_base64:
+        return {"error": "No video data provided. Use 'video' key with base64-encoded data"}
+
+    if not filename.endswith((".mp4", ".avi", ".mov", ".mkv", ".webm")):
+        return {
+            "error": "Invalid video format. Supported: MP4, AVI, MOV, MKV, WebM"
+        }
 
     temp_dir = tempfile.mkdtemp()
 
     try:
-        # Save uploaded file
-        video_path = os.path.join(temp_dir, file.filename)
+        # Decode base64 and save video
+        try:
+            video_bytes = base64.b64decode(video_base64)
+        except Exception as e:
+            return {"error": f"Invalid base64 encoding: {str(e)}"}
+
+        video_path = os.path.join(temp_dir, filename)
         with open(video_path, "wb") as buffer:
-            buffer.write(await file.read())
+            buffer.write(video_bytes)
 
         # Open video
         cap = cv2.VideoCapture(video_path)
