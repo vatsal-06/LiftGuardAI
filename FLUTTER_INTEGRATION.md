@@ -268,10 +268,13 @@ Response (200 OK):
 ```
 POST /process-video
 Host: localhost:8000
-Content-Type: multipart/form-data
+Content-Type: application/json
 
-Request:
-- file: Video file (MP4, AVI, MOV, MKV, WebM)
+Request Body:
+{
+  "video": "base64_encoded_video_string",
+  "filename": "fall_demo.mp4"
+}
 
 Response (200 OK):
 {
@@ -337,6 +340,8 @@ Response (200 OK):
   - `frames_with_people`: Count of frames with detected people
   - `fall_frames`: Count of frames with fall detected
   - `people_in_video`: Number of unique people
+
+  **Flutter upload note:** encode the selected video file to base64 before sending it to `/process-video`.
 
 **Supported Video Formats:**
 
@@ -494,21 +499,19 @@ class LiftGuardApiService {
   Future<VideoProcessingResult> processVideoFile(Uint8List videoBytes, String filename) async {
     try {
       final pythonUrl = baseUrl.replaceAll(':5500', ':8000');
-      var request = http.MultipartRequest(
-        'POST',
+      final response = await http.post(
         Uri.parse('$pythonUrl/process-video'),
-      );
-
-      request.files.add(
-        http.MultipartFile.fromBytes('file', videoBytes, filename: filename),
-      );
-
-      request.send().timeout(Duration(seconds: 300)); // 5 min timeout for large videos
-      final response = await request.send();
-      final responseData = await response.stream.bytesToString();
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: jsonEncode({
+          'video': base64Encode(videoBytes),
+          'filename': filename,
+        }),
+      ).timeout(const Duration(seconds: 300)); // 5 min timeout for large videos
 
       if (response.statusCode == 200) {
-        final data = jsonDecode(responseData);
+        final data = jsonDecode(response.body);
         return VideoProcessingResult.fromJson(data);
       } else {
         throw Exception('Video processing error: ${response.statusCode}');

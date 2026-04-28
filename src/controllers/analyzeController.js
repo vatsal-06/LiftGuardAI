@@ -8,6 +8,9 @@ const FRAME_WIDTH = 640;
 const FRAME_HEIGHT = 480;
 const MEDIAPIPE_SERVICE_URL =
   process.env.MEDIAPIPE_SERVICE_URL || "http://localhost:8001/mediapipe";
+const MEDIAPIPE_SERVICE_TIMEOUT_MS = Number(
+  process.env.MEDIAPIPE_SERVICE_TIMEOUT_MS || 60000
+);
 
 const normalize = (val, max) => val / max;
 const parseNumber = (value, fallback = 0) => {
@@ -47,7 +50,7 @@ exports.analyze = async (req, res) => {
         const mpRes = await axios.post(
           MEDIAPIPE_SERVICE_URL,
           { image },
-          { timeout: 5000 }
+          { timeout: MEDIAPIPE_SERVICE_TIMEOUT_MS }
         );
 
         console.log("MediaPipe:", mpRes.data);
