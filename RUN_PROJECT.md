@@ -209,7 +209,8 @@ CORS_ORIGIN=*
 ```
 
 6. Deploy
-7. After deploy, copy service URL, e.g.:
+7. First build can take several minutes because the Docker image preinstalls CPU PyTorch wheels for Ultralytics.
+8. After deploy, copy service URL, e.g.:
 
 `https://liftguard-python.onrender.com`
 
