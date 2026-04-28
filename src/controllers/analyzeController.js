@@ -11,6 +11,18 @@ const MEDIAPIPE_SERVICE_URL =
 const MEDIAPIPE_SERVICE_TIMEOUT_MS = Number(
   process.env.MEDIAPIPE_SERVICE_TIMEOUT_MS || 60000
 );
+const MEDIAPIPE_SERVICE_RETRIES = Number(
+  process.env.MEDIAPIPE_SERVICE_RETRIES || 2
+);
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const isRetryableError = (err) =>
+  err.code === "ECONNABORTED" ||
+  err.code === "ETIMEDOUT" ||
+  err.code === "ECONNRESET" ||
+  !err.response ||
+  [500, 502, 503, 504].includes(err.response?.status);
 
 const normalize = (val, max) => val / max;
 const parseNumber = (value, fallback = 0) => {
@@ -47,11 +59,28 @@ exports.analyze = async (req, res) => {
 
     if (detections.length > 0) {
       try {
-        const mpRes = await axios.post(
-          MEDIAPIPE_SERVICE_URL,
-          { image },
-          { timeout: MEDIAPIPE_SERVICE_TIMEOUT_MS }
-        );
+        let mpRes;
+
+        for (let attempt = 0; attempt <= MEDIAPIPE_SERVICE_RETRIES; attempt += 1) {
+          try {
+            mpRes = await axios.post(
+              MEDIAPIPE_SERVICE_URL,
+              { image },
+              { timeout: MEDIAPIPE_SERVICE_TIMEOUT_MS }
+            );
+            break;
+          } catch (mpErr) {
+            if (attempt >= MEDIAPIPE_SERVICE_RETRIES || !isRetryableError(mpErr)) {
+              throw mpErr;
+            }
+
+            const backoffMs = 500 * Math.pow(2, attempt);
+            console.warn(
+              `MediaPipe attempt ${attempt + 1} failed (${mpErr.code || mpErr.response?.status || "unknown"}). Retrying in ${backoffMs}ms.`
+            );
+            await sleep(backoffMs);
+          }
+        }
 
         console.log("MediaPipe:", mpRes.data);
 

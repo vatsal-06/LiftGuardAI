@@ -237,6 +237,10 @@ npm start
 CORS_ORIGIN=*
 YOLO_SERVICE_URL=https://liftguard-python.onrender.com/detect
 MEDIAPIPE_SERVICE_URL=https://liftguard-python.onrender.com/mediapipe
+YOLO_SERVICE_TIMEOUT_MS=60000
+YOLO_SERVICE_RETRIES=2
+MEDIAPIPE_SERVICE_TIMEOUT_MS=60000
+MEDIAPIPE_SERVICE_RETRIES=2
 ```
 
 7. Deploy

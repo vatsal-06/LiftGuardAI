@@ -11,7 +11,8 @@ const isRetryableError = (err) =>
   err.code === "ECONNABORTED" ||
   err.code === "ETIMEDOUT" ||
   err.code === "ECONNRESET" ||
-  !err.response;
+  !err.response ||
+  [500, 502, 503, 504].includes(err.response?.status);
 
 exports.getDetections = async (base64Image, fallDetected, motionScore) => {
   let lastError;
@@ -38,6 +39,9 @@ exports.getDetections = async (base64Image, fallDetected, motionScore) => {
       }
 
       const backoffMs = 500 * Math.pow(2, attempt);
+      console.warn(
+        `YOLO service attempt ${attempt + 1} failed (${err.code || err.response?.status || "unknown"}). Retrying in ${backoffMs}ms.`
+      );
       await sleep(backoffMs);
     }
   }
